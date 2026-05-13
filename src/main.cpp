@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #define SAMPLE_COUNT 60000 
 #define POST_TRIGGER_SAMPLES 50000 
+
 uint8_t logic_buffer[SAMPLE_COUNT];
 volatile bool triggered = false;
 
@@ -70,7 +71,7 @@ void setup() {
     while(!Serial) { if (millis() - t > 2000) break; }
     
     init_dma_timer();
-    start_capture_mode();
+    start_capture_mode(); // Sẵn sàng chụp
 }
 
 void loop() {
@@ -100,7 +101,7 @@ void loop() {
         }
     }
     if (triggered) {
-        // --- 1. CHỜ GHI ĐỦ MẪU TƯƠNG LAI ---
+        // CHỜ GHI ĐỦ MẪU 
         int32_t remaining = current_post_trigger;
         uint16_t prev_ndtr = DMA2_Stream5->NDTR;
         
@@ -113,12 +114,12 @@ void loop() {
             }
         }
 
-        // --- 2. DỪNG LẤY MẪU ---
+        //  DỪNG LẤY MẪU 
         TIM1->CR1 &= ~TIM_CR1_CEN; 
         DMA2_Stream5->CR &= ~DMA_SxCR_EN;
         while(DMA2_Stream5->CR & DMA_SxCR_EN);
 
-        // --- 3. ĐẨY LÊN USB ---
+        //  ĐẨY LÊN MT
         uint16_t split_index = (SAMPLE_COUNT - DMA2_Stream5->NDTR) % SAMPLE_COUNT;
 
         Serial.write(&logic_buffer[split_index], SAMPLE_COUNT - split_index);
@@ -127,7 +128,7 @@ void loop() {
         }
         Serial.flush();
         
-        // --- 4. RÌNH MỒI LẠI ---
+        // khởi động lại để sẵn sàng cho lần  tiếp theo
         start_capture_mode();
     }
 }
