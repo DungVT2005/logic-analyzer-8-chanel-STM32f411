@@ -11,7 +11,7 @@ print("Chế độ: [F]=Full 60k Tương lai, [P]=Có 10k Quá khứ")
 cmd_speed = input("Chọn tốc độ (1/2/3/4) : ")
 cmd_mode = input("Chọn chế độ (F/P) : ")
 try:
-    # Lấy đường dẫn tuyệt đối của file ngay tại thư mục Terminal đang đứng
+    # Lấy đường dẫn tuyệt đối của file 
     file_name = 'logic_data.bin'
     abs_path = os.path.abspath(file_name)
     print(f"Đang kết nối {COM_PORT}...")
