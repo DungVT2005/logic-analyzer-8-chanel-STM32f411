@@ -1,0 +1,255 @@
+
+CẤU HÌNH CHÂN  
+void config_GPIO_Input() {
+    // 1. Cấp xung nhịp cho Port A
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+
+    // 2. Cấu hình MODER: Đặt PA0, PA1, PA2, PA3 làm Input
+    // Thanh ghi MODER dùng 2 bit cho mỗi chân. 
+    // Trạng thái Input là '00'. 
+    // Ta xóa (Clear) 8 bit thấp nhất (từ bit 0 đến bit 7) về 0.
+    GPIOA->MODER &= ~(0x000000FF); 
+
+    // 3. Cấu hình PUPDR: Kéo xuống Pull-down (10) cho PA0 -> PA3
+    // Thanh ghi PUPDR cũng dùng 2 bit cho mỗi chân.
+    // Xóa sạch trạng thái cũ của 8 bit thấp trước
+    GPIOA->PUPDR &= ~(0x000000FF);
+    
+    // Đặt bit '10' cho lần lượt PA0, PA1, PA2, PA3
+    // PA0 (bit 1:0) = 10
+    // PA1 (bit 3:2) = 10
+    // PA2 (bit 5:4) = 10
+    // PA3 (bit 7:6) = 10
+    // Ghép lại thành mã Hex: 1010 1010 = 0xAA
+    GPIOA->PUPDR |= 0x000000AA; 
+}
+bật clock
+void enable_Clock() {
+    // 1. Bật Clock cho GPIOA và DMA2 (Nằm trên bus AHB1)
+    // - Dùng toán tử |= (OR) để chỉ bật các bit cần thiết mà không vô tình tắt các bit khác
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_DMA2EN;
+
+    // 2. Bật Clock cho TIM2 (Nằm trên bus APB1)
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+}
+
+cấu hình timer
+void config_Timer_1kHz() {
+    // 1. Bật Clock cho TIM2 (Nằm trên bus APB1)
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+
+    // 2. Thiết lập bộ chia (Prescaler) và giá trị nạp lại (Auto-reload)
+    // Tùy vào Clock hệ thống, đây là thông số cho 84MHz (APB1 = 42MHz)
+    TIM2->PSC = 41;         
+    TIM2->ARR = 999;        
+
+    // 3. Cho phép Timer tạo yêu cầu DMA mỗi khi tràn (Update Event)
+    TIM2->DIER |= TIM_DIER_UDE; 
+
+    // 4. Lưu ý: Chưa bật TIM2->CR1 |= TIM_CR1_CEN ngay, 
+    // để dành lúc nào nhấn "Start" mới cho chạy.
+}
+
+cấu hình DMA 
+#define SAMPLE_COUNT 1000
+uint8_t logic_buffer[SAMPLE_COUNT];
+
+void config_DMA_Transfer() {
+    // 1. Bật Clock cho DMA2 (Dùng DMA2 mới đọc được GPIO trên F411)
+    RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
+
+    // 2. Đảm bảo DMA đang tắt để cấu hình
+    DMA2_Stream0->CR &= ~DMA_SxCR_EN;
+    while(DMA2_Stream0->CR & DMA_SxCR_EN); 
+
+    // 3. Thiết lập địa chỉ nguồn và đích
+    // Nguồn: Thanh ghi IDR của GPIOA (đọc trạng thái chân)
+    DMA2_Stream0->PAR = (uint32_t)&(GPIOA->IDR);
+    // Đích: Mảng RAM của chúng ta
+    DMA2_Stream0->M0AR = (uint32_t)logic_buffer;
+
+    // 4. Số lượng mẫu cần lấy
+    DMA2_Stream0->NDTR = SAMPLE_COUNT;
+
+    // 5. Cấu hình chi tiết trong thanh ghi CR
+    // - CHSEL: Channel 3 (cho TIM2_UP) -> bit 27:25 là 011
+    // - MINC: Tự động tăng địa chỉ RAM sau mỗi mẫu -> bit 10 là 1
+    // - PSIZE/MSIZE: Đều chọn 8-bit (hoặc 16-bit tùy Dũng) -> 00
+    // - CIRC: Chế độ vòng tròn (nếu muốn đo liên tục) -> bit 8 là 1
+    // - PL: Priority High -> bit 17:16 là 10
+    DMA2_Stream0->CR = (3 << 25) | DMA_SxCR_MINC | DMA_SxCR_CIRC | (2 << 16);
+
+    // 6. Kích hoạt DMA chờ sẵn tín hiệu từ Timer
+    DMA2_Stream0->CR |= DMA_SxCR_EN;
+}
+
+ĐIỀU KHIỂN TRẠNG THÁI 
+// Khai báo trạng thái
+enum AnalyzerState { IDLE, ARMED, CAPTURING, SENDING };
+AnalyzerState currentState = IDLE;
+
+// Biến hỗ trợ Trigger
+uint8_t lastState = 0x01; 
+
+void loop() {
+  switch (currentState) {
+    case IDLE:
+      // Giả sử ông nhấn phím 's' trên Serial để bắt đầu "Rình"
+      if (Serial.available() > 0) {
+        char c = Serial.read();
+        if (c == 's') {
+          Serial.println("System ARMED. Waiting for Falling Edge on PA0...");
+          currentState = ARMED;
+        }
+      }
+      break;
+
+    case ARMED:
+      // 1. LOGIC TRIGGER: Phát hiện cạnh xuống (1 -> 0) trên chân PA0
+      uint8_t currentStatePA0 = (GPIOA->IDR & 0x01);
+      if (lastState == 0x01 && currentStatePA0 == 0x00) {
+        
+        // 2. KÍCH HOẠT PHẦN CỨNG
+        DMA2_Stream0->NDTR = SAMPLE_COUNT; // Reset số lượng mẫu
+        DMA2_Stream0->CR |= DMA_SxCR_EN;   // Bật DMA
+        TIM2->CR1 |= TIM_CR1_CEN;          // Bật Timer -> Bắt đầu lấy mẫu!
+        
+        Serial.println("Triggered! Capturing...");
+        currentState = CAPTURING;
+      }
+      lastState = currentStatePA0;
+      break;
+
+    case CAPTURING:
+      // Kiểm tra xem DMA đã lấy đủ mẫu chưa (Thanh ghi NDTR về 0)
+      if (DMA2_Stream0->NDTR == 0) {
+        TIM2->CR1 &= ~TIM_CR1_CEN; // Dừng Timer ngay lập tức
+        currentState = SENDING;
+      }
+      break;
+
+    case SENDING:
+      Serial.println("Transferring data...");
+      
+      // Gửi dữ liệu thô (Binary) lên App cho Kiệt xử lý
+      // Hoặc in ra Serial Plotter kèm Offset như tôi chỉ hôm trước
+      for (int i = 0; i < SAMPLE_COUNT; i++) {
+        // Gửi 4 kênh PA0-PA3
+        for (int ch = 0; ch < 4; ch++) {
+          int val = (logic_buffer[i] >> ch) & 0x01;
+          Serial.print(val + (ch * 2)); 
+          if (ch < 3) Serial.print(",");
+        }
+        Serial.println();
+      }
+      
+      Serial.println("Done. Returning to IDLE.");
+      currentState = IDLE;
+      break;
+  }
+}
+CAPTURE ghi xung vào buffer
+#define SAMPLE_COUNT 10000 // Độ dài buffer
+#define SAMPLING_FREQ 1000000 // 1MHz (1us mỗi mẫu)
+uint8_t logic_buffer[SAMPLE_COUNT];
+volatile bool capture_done = false;
+
+// Cấu hình DMA và Timer (đã thiết lập ở phần trước)
+void start_capture() {
+    capture_done = false;
+    DMA2_Stream0->NDTR = SAMPLE_COUNT;
+    DMA2_Stream0->CR |= DMA_SxCR_EN;
+    TIM2->CR1 |= TIM_CR1_CEN; 
+}
+
+GIẢI MÃ UART
+void decode_UART(uint32_t baudrate, int channel) {
+    int bit_samples = SAMPLING_FREQ / baudrate;
+    int i = 0;
+    while (i < SAMPLE_COUNT - (bit_samples * 10)) {
+        uint8_t bit = (logic_buffer[i] >> channel) & 0x01;
+        // 1. Tìm cạnh xuống (Start bit)
+        if (bit == 0) { 
+            i += bit_samples / 2; // Nhảy đến giữa bit Start
+            i += bit_samples;     // Nhảy đến giữa bit dữ liệu đầu tiên
+            
+            uint8_t received_char = 0;
+            for (int b = 0; b < 8; b++) {
+                uint8_t b_val = (logic_buffer[i] >> channel) & 0x01;
+                received_char |= (b_val << b);
+                i += bit_samples;
+            }
+            Serial.print("UART Detected: "); Serial.println((char)received_char);
+        }
+        i++;
+    }
+}
+GIẢI MÃ spi
+void decode_SPI(int sclk_ch, int mosi_ch, int miso_ch, int cs_ch) {
+    bool last_sclk = (logic_buffer[0] >> sclk_ch) & 0x01;
+    uint8_t mosi_byte = 0;
+    uint8_t miso_byte = 0;
+    int bit_count = 0;
+    bool in_frame = false;
+
+    Serial.println("\n--- SPI Decoding Result ---");
+
+    for (int i = 0; i < SAMPLE_COUNT; i++) {
+        bool cs = (logic_buffer[i] >> cs_ch) & 0x01;
+        bool sclk = (logic_buffer[i] >> sclk_ch) & 0x01;
+        bool mosi = (logic_buffer[i] >> mosi_ch) & 0x01;
+        bool miso = (logic_buffer[i] >> miso_ch) & 0x01;
+
+        // 1. Kiểm tra khung truyền (CS thấp là đang truyền)
+        if (cs == 0) {
+            if (!in_frame) {
+                in_frame = true;
+                bit_count = 0;
+                mosi_byte = 0;
+                miso_byte = 0;
+            }
+
+            // 2. Phát hiện cạnh lên của SCLK (Mode 0: CPOL=0, CPHA=0)
+            if (!last_sclk && sclk) {
+                mosi_byte = (mosi_byte << 1) | (mosi ? 1 : 0);
+                miso_byte = (miso_byte << 1) | (miso ? 1 : 0);
+                bit_count++;
+
+                if (bit_count == 8) {
+                    Serial.print("T="); Serial.print(i); Serial.print("us | ");
+                    Serial.print("MOSI: 0x"); Serial.print(mosi_byte, HEX);
+                    Serial.print("  MISO: 0x"); Serial.println(miso_byte, HEX);
+                    bit_count = 0;
+                    mosi_byte = 0;
+                    miso_byte = 0;
+                }
+            }
+        } else {
+            in_frame = false; // Kết thúc khung truyền khi CS lên cao
+        }
+        last_sclk = sclk;
+    }
+}
+GIẢI Mã I2C
+void decode_I2C(int sda_ch, int scl_ch) {
+    bool last_scl = (logic_buffer[0] >> scl_ch) & 0x01;
+    uint8_t data_byte = 0;
+    int bit_count = 0;
+
+    for (int i = 1; i < SAMPLE_COUNT; i++) {
+        bool current_scl = (logic_buffer[i] >> scl_ch) & 0x01;
+        bool current_sda = (logic_buffer[i] >> sda_ch) & 0x01;
+
+        // Phát hiện cạnh lên của SCL
+        if (!last_scl && current_scl) {
+            data_byte = (data_byte << 1) | current_sda;
+            bit_count++;
+            if (bit_count == 8) {
+                Serial.print("I2C Byte: 0x"); Serial.println(data_byte, HEX);
+                bit_count = 0; data_byte = 0;
+                i += 5; // Bỏ qua bit ACK
+            }
+        }
+        last_scl = current_scl;
+    }
+}

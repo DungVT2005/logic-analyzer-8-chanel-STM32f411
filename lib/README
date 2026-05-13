@@ -1,0 +1,2 @@
+python src/capture.py
+python src/app.py 
