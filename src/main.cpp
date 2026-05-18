@@ -12,7 +12,7 @@ void handle_trigger() {
     if (!triggered) {
         triggered = true;
         // Tắt ngắt 
-        EXTI->IMR &= ~0x000F; //    8 kênh ~0x00FF
+        EXTI->IMR &= ~0x00FF; //    8 kênh ~0x00FF
     }
 }
 
@@ -22,8 +22,8 @@ void init_dma_timer() {
     RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
     RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
  
-    GPIOA->MODER &= ~(0x000000FF);  // xác định chân iput    8 kênh 0x0000FFFF 
-    GPIOA->PUPDR &= ~(0x000000FF);   // Cấu hình PA0-PA3 là input floating 
+    GPIOA->MODER &= ~(0x0000FFFF );  // xác định chân iput    8 kênh 0x0000FFFF 
+    GPIOA->PUPDR &= ~(0x0000FFFF );   // Cấu hình PA0-PA3 là input floating 
     // cấu hình DMA
     DMA2_Stream5->CR = 0; 
     while(DMA2_Stream5->CR & DMA_SxCR_EN); 
@@ -38,10 +38,10 @@ void init_dma_timer() {
     TIM1->PSC = 0; 
     TIM1->ARR = current_arr;                   
     TIM1->DIER |= TIM_DIER_UDE; 
-    for (int i = 0; i <= 3; i++) {
+    for (int i = 0; i <= 7; i++) {
         attachInterrupt(digitalPinToInterrupt(i), handle_trigger, CHANGE);
     }
-    EXTI->IMR &= ~0x000F;  
+    EXTI->IMR &= ~0x00FF; // Khóa ngắt , sẽ mở khi sẵn sàng
 }
 
 void start_capture_mode() {
@@ -59,10 +59,10 @@ void start_capture_mode() {
     }
 
     // 3. Lau sạch nòng súng: Xóa bỏ mọi ngắt giả/nhiễu vô tình lọt vào trong lúc nạp đạn
-    EXTI->PR = 0x000F; 
+    EXTI->PR = 0x00FF; 
     
     // 4. Mở chốt an toàn: Cho phép 8 kênh (PA0-PA7) chính thức rình mồi!
-    EXTI->IMR |= 0x000F;
+    EXTI->IMR |= 0x00FF;
 }
 
 void setup() {
