@@ -66,7 +66,7 @@ class LogicAnalyzerApp(QMainWindow):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
-#  Thêm QSplitter chia màn hình ---
+#  Thêm QSplitter chia màn hình 
         self.splitter = QSplitter(Qt.Vertical)
         main_layout.addWidget(self.splitter)
 
@@ -77,7 +77,7 @@ class LogicAnalyzerApp(QMainWindow):
         # KHU VỰC 1: BẢNG ĐIỀU KHIỂN BẰNG NÚT TÍCH (RADIO BUTTONS)
         control_layout = QHBoxLayout()
 
-        # --- Ô 1: Chọn cổng COM ---
+        #  Ô 1: Chọn cổng COM 
         com_group = QGroupBox("1. Kết nối (Cổng COM)")
         com_layout = QVBoxLayout()
         self.port_combo = QComboBox()
@@ -91,7 +91,7 @@ class LogicAnalyzerApp(QMainWindow):
         com_group.setLayout(com_layout)
         control_layout.addWidget(com_group)
 
-        # --- Ô 2: Tích chọn Tốc độ ---
+        #  Ô 2: Tích chọn Tốc độ 
         speed_group = QGroupBox("2. Tốc độ lấy mẫu (Speed)")
         speed_layout = QVBoxLayout()
         self.rb_100k = QRadioButton("100 kHz")
@@ -108,7 +108,7 @@ class LogicAnalyzerApp(QMainWindow):
         speed_group.setLayout(speed_layout)
         control_layout.addWidget(speed_group)
 
-        # --- Ô 3: Tích chọn Kiểu lấy mẫu ---
+        #  Ô 3: Tích chọn Kiểu lấy mẫu 
         mode_group = QGroupBox("3. Kiểu lấy mẫu (Trigger Mode)")
         mode_layout = QVBoxLayout()
         self.rb_pre = QRadioButton("Bắt cả Quá khứ (Pre-Trigger)")
@@ -121,12 +121,24 @@ class LogicAnalyzerApp(QMainWindow):
         mode_layout.addStretch() # Đẩy các nút lên trên cho đẹp
         mode_group.setLayout(mode_layout)
         control_layout.addWidget(mode_group)
-
+        #  Ô 4: CHỌN BỘ GIẢI MÃ 
+        decode_group = QGroupBox("4. Giải mã tín hiệu")
+        decode_layout = QVBoxLayout()
+        self.decode_combo = QComboBox()
+        self.decode_combo.addItems([
+            "Không giải mã", 
+            "PWM (Kênh CH 0)", 
+            "UART (Kênh CH 0, 115200)", 
+            "SPI (CLK: CH0, MOSI: CH1)",
+            "I2C (SCL: CH0, SDA: CH1)"
+        ])
+        decode_layout.addWidget(self.decode_combo)
+        decode_layout.addStretch()
+        decode_group.setLayout(decode_layout)
+        control_layout.addWidget(decode_group)
         layout.addLayout(control_layout)
 
-    
         # KHU VỰC 2: NÚT BẤM ĐO & TRẠNG THÁI
-       
         action_layout = QHBoxLayout()
         
         self.btn_capture = QPushButton("▶ BẤM ĐỂ ĐO TÍN HIỆU NGAY")
@@ -175,8 +187,7 @@ class LogicAnalyzerApp(QMainWindow):
         self.plot_widget.setLimits(yMin=-1, yMax=16) # Khóa giới hạn
         self.plot_widget.setYRange(-1, 16, padding=0) 
         self.plot_widget.setMouseEnabled(y=False) # Cấm cuộn dọc, chỉ cho phép cuộn ngang
-    # ================= CÁC HÀM XỬ LÝ SỰ KIỆN =================
-
+    # CÁC HÀM XỬ LÝ SỰ KIỆN 
     def refresh_ports(self):
         self.port_combo.clear()
         ports = serial.tools.list_ports.comports()
@@ -230,15 +241,72 @@ class LogicAnalyzerApp(QMainWindow):
         
     # Nhân toàn bộ mảng 0->60000 với chu kỳ để tạo mảng thời gian
         time_axis = self.x_axis * Ts_ms
+     #  Khởi tạo mảng lưu dữ liệu thô 
+        raw_channels = []
+
+    #  Xóa đồ thị cũ và vẽ lại khung lưới 
+        self.plot_widget.clear()
+        self.curves = []
+        yticks = []
+        #  TẠO DANH SÁCH 8 MÀU TÙY Ý (Dùng mã HEX hoặc tên màu)
+        # Ông có thể lên mạng gõ "Hex color picker" để lấy mã màu ưng ý nhé
+        custom_colors = [
+            '#FF0000',  # CH 0: Đỏ tươi (Red)
+            '#00FF00',  # CH 1: Xanh lá cây (Green)
+            '#0000FF',  # CH 2: Xanh dương (Blue)
+            '#FF8C00',  # CH 3: Cam sậm (Dark Orange)
+            '#FF00FF',  # CH 4: Tím hồng (Magenta)
+            '#00CED1',  # CH 5: Xanh ngọc bích (Dark Turquoise)
+            '#FFD700',  # CH 6: Vàng ánh kim (Gold)
+            '#8B4513'   # CH 7: Nâu gỗ (Saddle Brown)
+        ]
+
+        for i in range(8):
+            #  lấy màu trực tiếp từ mảng trên
+            color = custom_colors[i] 
+            curve = self.plot_widget.plot(pen=pg.mkPen(color, width=2.5), stepMode="center")
+            self.curves.append(curve)
+            yticks.append((i * 2 + 0.5, f"CH {i}"))
+        self.plot_widget.getAxis('left').setTicks([yticks])
         # Thuật toán tách 8 kênh 
         for i in range(8):
             bit_array = (data >> i) & 1
+            raw_channels.append(bit_array) #  Lưu data thô cho từng kênh vào mảng 
             y_offset = bit_array * 1.0 + (i * 2)
             self.curves[i].setData(x=time_axis, y=y_offset) #  nạp cả trục x và trục y cùng lúc 
-
+        
+        #  CHẠY BỘ GIẢI MÃ & VẼ CHỮ LÊN MÀN HÌNH
+        decode_sel = self.decode_combo.currentIndex()
+        packets = []
+        
+        try:
+            if decode_sel == 1: # PWM ở CH0
+                packets = decoders.decode_pwm(raw_channels[0], self.current_fs)
+            elif decode_sel == 2: # UART ở CH0 (mặc định 115200)
+                packets = decoders.decode_uart(raw_channels[0], self.current_fs, 115200)
+            elif decode_sel == 3: # SPI với CLK=CH0, MOSI=CH1
+                packets = decoders.decode_spi(raw_channels[0], raw_channels[1], self.current_fs)
+            elif decode_sel == 4: # I2C với SCL=CH0, SDA=CH1
+                packets = decoders.decode_i2c(raw_channels[0], raw_channels[1], self.current_fs)
+                
+            # Duyệt qua các gói tin và gắn chữ lên đồ thị
+            for pkt in packets:
+                text_item = pg.TextItem(text=pkt['text'], color=(0, 0, 0), anchor=(0.5, 1))
+                text_item.fill = pg.mkBrush(255, 255, 0, 150) # Nền vàng mờ
+                
+                # Tính toán tọa độ đặt chữ
+                mid_idx = int((pkt['start'] + pkt['end']) / 2)
+                x_pos = mid_idx * Ts_ms
+                y_pos = 1.2 # Đặt chữ nổi phía trên đường baseline của CH0
+                
+                text_item.setPos(x_pos, y_pos)
+                self.plot_widget.addItem(text_item)
+                
+        except Exception as e:
+            print("Lỗi giải mã:", e) # Báo lỗi ra terminal, không làm sập App
         self.status_label.setText("✅ VẼ XONG! Kéo chuột để di chuyển, Lăn chuột để Zoom.")
         self.reset_button_ui()
-    # QUAN TRỌNG: Chỉ cho auto zoom trục X để nhìn thấy sóng, KHÓA CHẶT trục Y
+    #  Chỉ cho auto zoom trục X để nhìn thấy sóng, KHÓA CHẶT trục Y
         self.plot_widget.enableAutoRange(axis='x')
         self.plot_widget.enableAutoRange(axis='y', enable=False)
         self.plot_widget.setYRange(-1, 16, padding=0) # Ép lại Y một lần nữa cho chắc
