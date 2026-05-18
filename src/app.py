@@ -155,7 +155,7 @@ class LogicAnalyzerApp(QMainWindow):
         pg.setConfigOption('foreground', 'k')
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.setLabel('bottom', 'Dòng thời gian (Số thứ tự mẫu)')
+        self.plot_widget.setLabel('bottom', 'Thời gian (ms)')
         plot_layout.addWidget(self.plot_widget) #  Add vào plot_layout 
         self.splitter.addWidget(bottom_panel) #  Nạp đồ thị vào Splitter 
         self.splitter.setSizes([150, 550]) # Ép tỷ lệ bảng điều khiển luôn nhỏ  khi Fullscreen 
@@ -191,13 +191,23 @@ class LogicAnalyzerApp(QMainWindow):
         if port == "Không thấy mạch!" or not port:
             QMessageBox.warning(self, "Lỗi", "Chưa cắm mạch STM32 kìa ông giáo!")
             return
-            
-        # Tự động dịch các nút Tích chọn thành Mã Lệnh cho STM32
+      
+       # Tự động dịch các nút Tích chọn thành Mã Lệnh cho STM32 VÀ lưu Tần số
         speed_cmd = '3'
-        if self.rb_100k.isChecked(): speed_cmd = '1'
-        elif self.rb_500k.isChecked(): speed_cmd = '2'
-        elif self.rb_1m.isChecked(): speed_cmd = '3'
-        elif self.rb_2m.isChecked(): speed_cmd = '4'
+        self.current_fs = 1000000 # Mặc định là 1 MHz (1.000.000 Hz)
+
+        if self.rb_100k.isChecked(): 
+            speed_cmd = '1'
+            self.current_fs = 100000   # 100 kHz
+        elif self.rb_500k.isChecked(): 
+            speed_cmd = '2'
+            self.current_fs = 500000   # 500 kHz
+        elif self.rb_1m.isChecked(): 
+            speed_cmd = '3'
+            self.current_fs = 1000000  # 1 MHz
+        elif self.rb_2m.isChecked(): 
+            speed_cmd = '4'
+            self.current_fs = 2000000  # 2 MHz
 
         mode_cmd = 'P' if self.rb_pre.isChecked() else 'F'
 
@@ -214,11 +224,17 @@ class LogicAnalyzerApp(QMainWindow):
         self.thread.start()
 
     def update_plot(self, data):
+    # Tính toán chu kỳ của một mẫu (đơn vị mili-giây)
+     # Công thức: T = (1 / Tần số) * 1000
+        Ts_ms = (1.0 / self.current_fs) * 1000.0
+        
+    # Nhân toàn bộ mảng 0->60000 với chu kỳ để tạo mảng thời gian
+        time_axis = self.x_axis * Ts_ms
         # Thuật toán tách 8 kênh 
         for i in range(8):
             bit_array = (data >> i) & 1
             y_offset = bit_array * 1.0 + (i * 2)
-            self.curves[i].setData(x=self.x_axis, y=y_offset) #  nạp cả trục x và trục y cùng lúc 
+            self.curves[i].setData(x=time_axis, y=y_offset) #  nạp cả trục x và trục y cùng lúc 
 
         self.status_label.setText("✅ VẼ XONG! Kéo chuột để di chuyển, Lăn chuột để Zoom.")
         self.reset_button_ui()
