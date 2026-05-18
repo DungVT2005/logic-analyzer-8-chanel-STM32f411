@@ -1,252 +1,251 @@
 import sys
-import serial
 import numpy as np
+import serial
+import serial.tools.list_ports
 import pyqtgraph as pg
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
-                             QHBoxLayout, QWidget, QComboBox, QLabel, QLineEdit, QFileDialog, QStatusBar)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                             QHBoxLayout, QPushButton, QComboBox, QLabel, QMessageBox,
+                             QRadioButton, QGroupBox,QSplitter)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 
-# =====================================================================
-# THREAD XỬ LÝ SERIAL
-# =====================================================================
-class SerialWorker(QThread):
-    log_msg = pyqtSignal(str)
-    data_ready = pyqtSignal(np.ndarray, bytes)
-    finished_task = pyqtSignal()
+# THREAD XỬ LÝ SERIAL (Chạy ngầm, không đơ App)
 
-    def __init__(self, port, speed_cmd, mode_cmd, samples=60000):
+class CaptureThread(QThread):
+    data_ready = pyqtSignal(np.ndarray)
+    error_signal = pyqtSignal(str)
+    status_signal = pyqtSignal(str)
+
+    def __init__(self, port, speed_cmd, mode_cmd):
         super().__init__()
         self.port = port
         self.speed_cmd = speed_cmd
         self.mode_cmd = mode_cmd
-        self.samples = samples # Đã cập nhật thành 60.000 theo code C++
+        self.running = True
 
     def run(self):
         try:
-            self.log_msg.emit(f"Đang kết nối {self.port}...")
-            # Timeout 15s để bạn có đủ thời gian kích hoạt trigger trên mạch
-            with serial.Serial(self.port, 115200, timeout=15) as ser:
-                ser.reset_input_buffer()
+            with serial.Serial(self.port, 115200, timeout=1) as ser:
+                self.status_signal.emit(f"Đã kết nối {self.port}. Đang gửi lệnh cấu hình xuống STM32...")
                 
+                # App tự động âm thầm gửi ký tự cấu hình xuống STM32
                 ser.write(self.speed_cmd.encode())
-                self.msleep(100)
                 ser.write(self.mode_cmd.encode())
-                self.msleep(100)
                 
-                self.log_msg.emit("Đang chờ tín hiệu Trigger...")
-                
-                raw_bytes = ser.read(self.samples)
-                
-                if len(raw_bytes) == self.samples:
-                    self.log_msg.emit(f"✓ Đã capture {self.samples} mẫu thành công")
-                    raw_data = np.frombuffer(raw_bytes, dtype=np.uint8)
-                    self.data_ready.emit(raw_data, raw_bytes)
-                else:
-                    self.log_msg.emit(f"Lỗi: Chỉ nhận {len(raw_bytes)}/{self.samples} byte (Hết thời gian chờ).")
-                    
-        except Exception as e:
-            self.log_msg.emit(f"Lỗi cổng: {e}")
-        finally:
-            self.finished_task.emit()
+                # Xóa sạch rác
+                ser.reset_input_buffer() 
+                self.status_signal.emit("Trạng thái: Cấu hình xong! Đang rình mồi chờ tín hiệu Trigger...")
 
-# =====================================================================
+                # Đọc đúng 60.000 mẫu
+                buffer = bytearray()
+                while self.running and len(buffer) < 60000:
+                    chunk = ser.read(60000 - len(buffer))
+                    if chunk:
+                        buffer.extend(chunk)
+
+                if len(buffer) == 60000:
+                    self.status_signal.emit("Trạng thái: Vừa hốt trọn 60.000 mẫu! Đang vẽ đồ thị...")
+                    data = np.frombuffer(buffer, dtype=np.uint8)
+                    self.data_ready.emit(data)
+                else:
+                    if self.running:
+                        self.error_signal.emit("Đã hủy hoặc bị quá thời gian chờ!")
+
+        except Exception as e:
+            self.error_signal.emit(f"Lỗi cổng {self.port}: Mạch bị lỏng cáp hoặc cổng COM đang bị phần mềm khác chiếm!")
+
+    def stop(self):
+        self.running = False
 # GIAO DIỆN CHÍNH
-# =====================================================================
 class LogicAnalyzerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Logic Analyzer")
-        self.resize(1280, 720)
-        self.SAMPLE_COUNT = 60000
-        self.raw_bytes_cache = None # Dùng để lưu file .bin
-
-        self.setup_ui()
-
-    def setup_ui(self):
-        # --- STYLESHEET (Giao diện Dark Mode) ---
-        self.setStyleSheet("""
-            QMainWindow { background-color: #0b111a; }
-            QLabel { color: #64748b; font-size: 11px; font-weight: bold; }
-            QPushButton { 
-                background-color: #1e293b; color: #cbd5e1; 
-                border: 1px solid #334155; padding: 6px 12px; border-radius: 3px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #334155; }
-            QPushButton#capture { 
-                background-color: #059669; color: white; border: 1px solid #047857; 
-            }
-            QPushButton#capture:hover { background-color: #10b981; }
-            QPushButton#capture:disabled { background-color: #b45309; color: white; border: none; }
-            QComboBox, QLineEdit { 
-                background-color: #1e293b; color: white; 
-                border: 1px solid #334155; padding: 4px; border-radius: 3px;
-            }
-            QStatusBar { background-color: #0f172a; color: #64748b; }
-        """)
+        self.setWindowTitle("HUST Logic Analyzer - Bảng điều khiển trung tâm")
+        self.resize(1050, 700)
+        self.thread = None
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 5)
-        main_widget.setLayout(main_layout)
+        main_layout = QVBoxLayout(main_widget)
+#  Thêm QSplitter chia màn hình ---
+        self.splitter = QSplitter(Qt.Vertical)
+        main_layout.addWidget(self.splitter)
 
-        # --- TOP TOOLBAR ---
-        toolbar = QHBoxLayout()
+# Gói toàn bộ Bảng điều khiển vào một Panel phía trên
+        top_panel = QWidget()
+        layout = QVBoxLayout(top_panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        # KHU VỰC 1: BẢNG ĐIỀU KHIỂN BẰNG NÚT TÍCH (RADIO BUTTONS)
+        control_layout = QHBoxLayout()
+
+        # --- Ô 1: Chọn cổng COM ---
+        com_group = QGroupBox("1. Kết nối (Cổng COM)")
+        com_layout = QVBoxLayout()
+        self.port_combo = QComboBox()
+        self.refresh_ports()
         
-        # Logo / Title
-        title = QLabel("◆ LOGIC ANALYZER")
-        title.setStyleSheet("color: #10b981; font-size: 14px; margin-right: 15px;")
-        toolbar.addWidget(title)
+        btn_refresh = QPushButton("🔄 Quét lại COM")
+        btn_refresh.clicked.connect(self.refresh_ports)
+        
+        com_layout.addWidget(self.port_combo)
+        com_layout.addWidget(btn_refresh)
+        com_group.setLayout(com_layout)
+        control_layout.addWidget(com_group)
 
-        # Cổng COM
-        self.port_input = QLineEdit("COM6")
-        self.port_input.setFixedWidth(60)
-        toolbar.addWidget(self.port_input)
+        # --- Ô 2: Tích chọn Tốc độ ---
+        speed_group = QGroupBox("2. Tốc độ lấy mẫu (Speed)")
+        speed_layout = QVBoxLayout()
+        self.rb_100k = QRadioButton("100 kHz")
+        self.rb_500k = QRadioButton("500 kHz")
+        self.rb_1m = QRadioButton("1 MHz")
+        self.rb_2m = QRadioButton("2 MHz")
+        
+        self.rb_1m.setChecked(True)  # Mặc định tích chọn 1MHz
+        
+        speed_layout.addWidget(self.rb_100k)
+        speed_layout.addWidget(self.rb_500k)
+        speed_layout.addWidget(self.rb_1m)
+        speed_layout.addWidget(self.rb_2m)
+        speed_group.setLayout(speed_layout)
+        control_layout.addWidget(speed_group)
 
-        toolbar.addSpacing(15)
+        # --- Ô 3: Tích chọn Kiểu lấy mẫu ---
+        mode_group = QGroupBox("3. Kiểu lấy mẫu (Trigger Mode)")
+        mode_layout = QVBoxLayout()
+        self.rb_pre = QRadioButton("Bắt cả Quá khứ (Pre-Trigger)")
+        self.rb_post = QRadioButton("Chỉ bắt Tương lai (Full Post-Trigger)")
+        
+        self.rb_pre.setChecked(True) # Mặc định tích chọn Pre-trigger
+        
+        mode_layout.addWidget(self.rb_pre)
+        mode_layout.addWidget(self.rb_post)
+        mode_layout.addStretch() # Đẩy các nút lên trên cho đẹp
+        mode_group.setLayout(mode_layout)
+        control_layout.addWidget(mode_group)
 
-        # RATE
-        toolbar.addWidget(QLabel("RATE"))
-        self.speed_combo = QComboBox()
-        self.speed_combo.addItems(["100k", "500k", "1M", "2M"])
-        self.speed_combo.setCurrentIndex(2) # Default 1M
-        toolbar.addWidget(self.speed_combo)
+        layout.addLayout(control_layout)
 
-        toolbar.addSpacing(10)
-
-        # MODE
-        toolbar.addWidget(QLabel("MODE"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Pre-trig (10k)", "P")
-        self.mode_combo.addItem("Full Post", "F")
-        self.mode_combo.setCurrentIndex(1)
-        toolbar.addWidget(self.mode_combo)
-
-        toolbar.addSpacing(15)
-
-        # NÚT CAPTURE
-        self.btn_capture = QPushButton("▶ CAPTURE")
-        self.btn_capture.setObjectName("capture")
+    
+        # KHU VỰC 2: NÚT BẤM ĐO & TRẠNG THÁI
+       
+        action_layout = QHBoxLayout()
+        
+        self.btn_capture = QPushButton("▶ BẤM ĐỂ ĐO TÍN HIỆU NGAY")
+        self.btn_capture.setStyleSheet("""
+            QPushButton {
+                background-color: #d9534f; color: white; 
+                font-size: 16px; font-weight: bold; padding: 10px; border-radius: 5px;
+            }
+            QPushButton:hover { background-color: #c9302c; }
+            QPushButton:disabled { background-color: #cccccc; color: #666666; }
+        """)
         self.btn_capture.clicked.connect(self.start_capture)
-        toolbar.addWidget(self.btn_capture)
-
-        toolbar.addStretch()
-
-        # ZOOM CONTROLS
-        toolbar.addWidget(QLabel("ZOOM"))
-        btn_zoom_in = QPushButton("+")
-        btn_zoom_in.setFixedWidth(30)
-        btn_zoom_in.clicked.connect(lambda: self.plot_widget.getViewBox().scaleBy(x=0.5))
         
-        btn_zoom_out = QPushButton("-")
-        btn_zoom_out.setFixedWidth(30)
-        btn_zoom_out.clicked.connect(lambda: self.plot_widget.getViewBox().scaleBy(x=2.0))
+        self.status_label = QLabel("Trạng thái: Sẵn sàng")
+        self.status_label.setStyleSheet("color: blue; font-size: 14px; font-weight: bold;")
         
-        btn_fit = QPushButton("Fit")
-        btn_fit.clicked.connect(self.fit_view)
-
-        toolbar.addWidget(btn_zoom_in)
-        toolbar.addWidget(btn_zoom_out)
-        toolbar.addWidget(btn_fit)
-
-        toolbar.addSpacing(15)
-
-        # NÚT SAVE BIN
-        btn_save = QPushButton("↓ .bin")
-        btn_save.clicked.connect(self.save_bin)
-        toolbar.addWidget(btn_save)
-
-        main_layout.addLayout(toolbar)
-
-        # --- ĐỒ THỊ PYQTGRAPH ---
-        pg.setConfigOption('background', '#0b111a')
-        pg.setConfigOption('foreground', '#334155')
+        action_layout.addWidget(self.btn_capture, stretch=1)
+        action_layout.addWidget(self.status_label, stretch=2)
+        layout.addLayout(action_layout)
+        self.splitter.addWidget(top_panel) # : Nạp phần điều khiển vào Splitter
+        # KHU VỰC 3: MÀN HÌNH ĐỒ THỊ 
+        bottom_panel = QWidget() # Gói đồ thị vào panel dưới để dễ quản lý
+        plot_layout = QVBoxLayout(bottom_panel)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        pg.setConfigOption('background', '#f5f5f5') # Màu nền xám nhạt dịu mắt
+        pg.setConfigOption('foreground', 'k')
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.2)
-        self.plot_widget.setMouseEnabled(x=True, y=False) # Khóa trục Y, chỉ zoom trục X
-        
-        # Ẩn số liệu mặc định của trục Y và tạo nhãn text Custom
-        ay = self.plot_widget.getAxis('left')
-        ay.setTicks([[(6.5, 'CH0\nPA0'), (4.5, 'CH1\nPA1'), (2.5, 'CH2\nPA2'), (0.5, 'CH3\nPA3')]])
-        ay.setStyle(tickTextOffset=10)
-        
-        main_layout.addWidget(self.plot_widget, stretch=1)
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.setLabel('bottom', 'Dòng thời gian (Số thứ tự mẫu)')
+        plot_layout.addWidget(self.plot_widget) #  Add vào plot_layout 
+        self.splitter.addWidget(bottom_panel) #  Nạp đồ thị vào Splitter 
+        self.splitter.setSizes([150, 550]) # Ép tỷ lệ bảng điều khiển luôn nhỏ  khi Fullscreen 
+        # Tạo sẵn 8 đường ngang chờ dữ liệu
+        self.curves = []
+        yticks = []
+        self.x_axis = np.arange(60001) # Trục X cố định từ 0 đến 60000
+        for i in range(8):
+            color = pg.intColor(i, hues=8, values=1, maxHue=360, alpha=255)
+           
+            curve = self.plot_widget.plot(pen=pg.mkPen(color, width=2.5), stepMode="center")
+            self.curves.append(curve)
+            yticks.append((i * 2 + 0.5, f"CH {i}")) 
 
-        # --- STATUS BAR ---
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_label = QLabel(f"Samples: {self.SAMPLE_COUNT}   |   Sẵn sàng")
-        self.status_label.setStyleSheet("color: #10b981; font-weight: normal;")
-        self.status_bar.addWidget(self.status_label)
+        self.plot_widget.getAxis('left').setTicks([yticks])
+        # Mở rộng dải Y xuống -1 để  không bị trục X đè lên
+        self.plot_widget.setLimits(yMin=-1, yMax=16) # Khóa giới hạn
+        self.plot_widget.setYRange(-1, 16, padding=0) 
+        self.plot_widget.setMouseEnabled(y=False) # Cấm cuộn dọc, chỉ cho phép cuộn ngang
+    # ================= CÁC HÀM XỬ LÝ SỰ KIỆN =================
 
-    # =====================================================================
-    # LOGIC CHỨC NĂNG
-    # =====================================================================
-    def fit_view(self):
-        self.plot_widget.setXRange(0, self.SAMPLE_COUNT, padding=0)
-        self.plot_widget.setYRange(-1, 8, padding=0)
-
-    def save_bin(self):
-        if not self.raw_bytes_cache:
-            self.status_label.setText("Chưa có dữ liệu để lưu!")
-            self.status_label.setStyleSheet("color: #ef4444;")
-            return
-            
-        options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getSaveFileName(self, "Lưu file Binary", "logic_data.bin", "Binary Files (*.bin)", options=options)
-        if file_name:
-            with open(file_name, 'wb') as f:
-                f.write(self.raw_bytes_cache)
-            self.status_label.setText(f"Đã lưu file: {file_name}")
+    def refresh_ports(self):
+        self.port_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        if ports:
+            for p in ports:
+                self.port_combo.addItem(p.device)
+        else:
+            self.port_combo.addItem("Không thấy mạch!")
 
     def start_capture(self):
-        port = self.port_input.text().strip()
-        speed_idx = self.speed_combo.currentIndex()
-        mode_cmd = self.mode_combo.currentData()
-        speed_cmd = str(speed_idx + 1) # index 0,1,2,3 -> '1','2','3','4'
+        port = self.port_combo.currentText().strip()
+        if port == "Không thấy mạch!" or not port:
+            QMessageBox.warning(self, "Lỗi", "Chưa cắm mạch STM32 kìa ông giáo!")
+            return
+            
+        # Tự động dịch các nút Tích chọn thành Mã Lệnh cho STM32
+        speed_cmd = '3'
+        if self.rb_100k.isChecked(): speed_cmd = '1'
+        elif self.rb_500k.isChecked(): speed_cmd = '2'
+        elif self.rb_1m.isChecked(): speed_cmd = '3'
+        elif self.rb_2m.isChecked(): speed_cmd = '4'
 
+        mode_cmd = 'P' if self.rb_pre.isChecked() else 'F'
+
+        # Đổi giao diện để báo hiệu đang chờ
         self.btn_capture.setEnabled(False)
-        self.btn_capture.setText("⏳ WAITING...")
-        self.status_label.setText("Đang chờ trigger từ phần cứng...")
-        self.status_label.setStyleSheet("color: #f59e0b;") # Màu vàng cảnh báo
-
-        self.worker = SerialWorker(port, speed_cmd, mode_cmd, samples=self.SAMPLE_COUNT)
-        self.worker.log_msg.connect(self.update_status)
-        self.worker.data_ready.connect(self.draw_signals)
-        self.worker.finished_task.connect(self.reset_ui)
-        self.worker.start()
-
-    def update_status(self, msg):
-        self.status_label.setText(msg)
-        if "Lỗi" in msg:
-            self.status_label.setStyleSheet("color: #ef4444;") # Đỏ
-        elif "thành công" in msg:
-            self.status_label.setStyleSheet("color: #10b981;") # Xanh lá
-
-    def draw_signals(self, raw_data, raw_bytes):
-        self.raw_bytes_cache = raw_bytes # Lưu lại để xuất ra file .bin
-        self.plot_widget.clear()
-
-        # Giải mã bit (PA0 -> PA3)
-        ch0 = (raw_data & 0x01)
-        ch1 = (raw_data & 0x02) >> 1
-        ch2 = (raw_data & 0x04) >> 2
-        ch3 = (raw_data & 0x08) >> 3
-
-        # Vẽ 4 kênh với màu chuẩn của PulseView/LogicAnalyzer
-        # Kết nối bằng 'finite' hoặc mặc định đều rất nhanh với pg
-        self.plot_widget.plot(ch0 + 6, pen=pg.mkPen('#4ade80', width=1.5), name="CH0") # Xanh lá
-        self.plot_widget.plot(ch1 + 4, pen=pg.mkPen('#38bdf8', width=1.5), name="CH1") # Xanh dương
-        self.plot_widget.plot(ch2 + 2, pen=pg.mkPen('#fb923c', width=1.5), name="CH2") # Cam
-        self.plot_widget.plot(ch3 + 0, pen=pg.mkPen('#c084fc', width=1.5), name="CH3") # Tím
+        self.btn_capture.setText("⏳ ĐANG CHỜ TRIGGER...")
+        self.btn_capture.setStyleSheet("background-color: #f0ad4e; color: white; font-size: 16px; font-weight: bold; padding: 10px;")
         
-        self.fit_view()
+        # Bắn luồng xuống để xử lý
+        self.thread = CaptureThread(port, speed_cmd, mode_cmd)
+        self.thread.data_ready.connect(self.update_plot)
+        self.thread.status_signal.connect(self.status_label.setText)
+        self.thread.error_signal.connect(self.show_error)
+        self.thread.start()
 
-    def reset_ui(self):
+    def update_plot(self, data):
+        # Thuật toán tách 8 kênh 
+        for i in range(8):
+            bit_array = (data >> i) & 1
+            y_offset = bit_array * 1.0 + (i * 2)
+            self.curves[i].setData(x=self.x_axis, y=y_offset) #  nạp cả trục x và trục y cùng lúc 
+
+        self.status_label.setText("✅ VẼ XONG! Kéo chuột để di chuyển, Lăn chuột để Zoom.")
+        self.reset_button_ui()
+    # QUAN TRỌNG: Chỉ cho auto zoom trục X để nhìn thấy sóng, KHÓA CHẶT trục Y
+        self.plot_widget.enableAutoRange(axis='x')
+        self.plot_widget.enableAutoRange(axis='y', enable=False)
+        self.plot_widget.setYRange(-1, 16, padding=0) # Ép lại Y một lần nữa cho chắc
+    def show_error(self, msg):
+        self.status_label.setText(f"❌ LỖI: {msg}")
+        QMessageBox.critical(self, "Cảnh báo", msg)
+        self.reset_button_ui()
+
+    def reset_button_ui(self):
         self.btn_capture.setEnabled(True)
-        self.btn_capture.setText("▶ CAPTURE")
+        self.btn_capture.setText("▶ BẤM ĐỂ ĐO TÍN HIỆU NGAY")
+        self.btn_capture.setStyleSheet("""
+            QPushButton { background-color: #d9534f; color: white; font-size: 16px; font-weight: bold; padding: 10px; border-radius: 5px;}
+            QPushButton:hover { background-color: #c9302c; }
+        """)
 
-if __name__ == "__main__":
+    def closeEvent(self, event):
+        if self.thread and self.thread.isRunning():
+            self.thread.stop()
+            self.thread.wait()
+        event.accept()
+
+if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = LogicAnalyzerApp()
     window.show()
