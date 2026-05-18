@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QComboBox, QLabel, QMessageBox,
                              QRadioButton, QGroupBox,QSplitter)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
-
+import decoders
 # THREAD XỬ LÝ SERIAL (Chạy ngầm, không đơ App)
 
 class CaptureThread(QThread):
