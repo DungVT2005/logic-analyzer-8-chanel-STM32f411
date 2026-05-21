@@ -1,10 +1,5 @@
 import numpy as np
 
-# =========================================================
-# THƯ VIỆN GIẢI MÃ TÍN HIỆU LOGIC (PROTOCOL LEVEL)
-# Trả về danh sách các gói tin: {"text": "Giá trị", "start": vị_trí_bắt_đầu, "end": vị_trí_kết_thúc}
-# =========================================================
-
 def decode_pwm(data_ch, fs):
     """Tính toán Tần số và Duty Cycle của kênh PWM"""
     packets = []
