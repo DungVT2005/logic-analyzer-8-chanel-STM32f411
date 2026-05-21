@@ -200,7 +200,7 @@ class LogicAnalyzerApp(QMainWindow):
     def start_capture(self):
         port = self.port_combo.currentText().strip()
         if port == "Không thấy mạch!" or not port:
-            QMessageBox.warning(self, "Lỗi", "Chưa cắm mạch STM32 kìa ông giáo!")
+            QMessageBox.warning(self, "Lỗi", "Không tìm thấy cổng COM ")
             return
       
        # Tự động dịch các nút Tích chọn thành Mã Lệnh cho STM32 VÀ lưu Tần số
