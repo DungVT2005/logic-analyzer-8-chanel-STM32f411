@@ -135,6 +135,9 @@ class LogicAnalyzerApp(QMainWindow):
         self.setWindowTitle("HUST Logic Analyzer - Bảng điều khiển trung tâm")
         self.resize(1150, 700)
         self.thread = None
+        self.last_raw_channels = None
+        self.last_ts_ms = None
+        self.decode_text_items = []
         self.decode_config_widgets = []   # danh sách các DecodeConfigWidget đang hiển thị
 
         main_widget = QWidget()
@@ -219,7 +222,21 @@ class LogicAnalyzerApp(QMainWindow):
         """)
         btn_add.setMaximumWidth(220)
         btn_add.clicked.connect(self.add_decode_config)
-        decode_outer.addWidget(btn_add)
+
+        self.btn_decode_now = QPushButton("Giai ma")
+        self.btn_decode_now.setStyleSheet("""
+            QPushButton { background-color: #2f80ed; color: white;
+                          font-weight: bold; border-radius: 4px; padding: 4px 10px; }
+            QPushButton:hover { background-color: #1f6fd6; }
+        """)
+        self.btn_decode_now.setMaximumWidth(120)
+        self.btn_decode_now.clicked.connect(self.decode_last_capture)
+
+        decode_button_row = QHBoxLayout()
+        decode_button_row.addWidget(btn_add)
+        decode_button_row.addWidget(self.btn_decode_now)
+        decode_button_row.addStretch()
+        decode_outer.addLayout(decode_button_row)
 
         decode_group.setLayout(decode_outer)
         control_layout.addWidget(com_group, stretch=2)  # tỉ lệ các ô
@@ -290,6 +307,71 @@ class LogicAnalyzerApp(QMainWindow):
         self.decode_list_layout.removeWidget(w)
         w.deleteLater()
 
+    def clear_decode_annotations(self):
+        for item in self.decode_text_items:
+            try:
+                self.plot_widget.removeItem(item)
+            except Exception:
+                pass
+        self.decode_text_items = []
+
+    def decode_last_capture(self):
+        if self.last_raw_channels is None or self.last_ts_ms is None:
+            QMessageBox.information(self, "Chua co du lieu", "Hay chup tin hieu truoc.")
+            return
+        count = self.apply_decoders(self.last_raw_channels, self.last_ts_ms)
+        self.status_label.setText(f"Da giai ma lai tin hieu vua chup: {count} nhan.")
+
+    def apply_decoders(self, raw_channels, Ts_ms):
+        self.clear_decode_annotations()
+        decode_funcs = {
+            "PWM": lambda cfg, rc: (
+                decoders.decode_pwm(rc[cfg["channels"]["Data"]], self.current_fs),
+                cfg["channels"]["Data"]
+            ),
+            "UART": lambda cfg, rc: (
+                decoders.decode_uart(rc[cfg["channels"]["RX"]], self.current_fs, 115200),
+                cfg["channels"]["RX"]
+            ),
+            "SPI": lambda cfg, rc: (
+                decoders.decode_spi(
+                    rc[cfg["channels"]["CLK"]],
+                    rc[cfg["channels"]["MOSI"]],
+                    rc[cfg["channels"]["MISO"]],
+                    self.current_fs
+                ),
+                cfg["channels"]["MOSI"]
+            ),
+            "I2C": lambda cfg, rc: (
+                decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs),
+                cfg["channels"]["SDA"]
+            ),
+        }
+
+        label_count = 0
+        for cfg_widget in self.decode_config_widgets:
+            cfg = cfg_widget.get_config()
+            if cfg is None:
+                continue
+            t = cfg["type"]
+            if t not in decode_funcs:
+                continue
+            try:
+                packets, ref_ch = decode_funcs[t](cfg, raw_channels)
+                for pkt in packets:
+                    text_item = pg.TextItem(text=pkt["text"], color=(0, 0, 0), anchor=(0.5, 1))
+                    text_item.fill = pg.mkBrush(255, 255, 0, 150)
+                    mid_idx = int((pkt["start"] + pkt["end"]) / 2)
+                    x_pos = mid_idx * Ts_ms
+                    y_pos = ref_ch * 2 + 1.2
+                    text_item.setPos(x_pos, y_pos)
+                    self.plot_widget.addItem(text_item)
+                    self.decode_text_items.append(text_item)
+                    label_count += 1
+            except Exception as e:
+                print(f"Loi giai ma {t}:", e)
+        return label_count
+
     # CÁC HÀM GỐC GIỮ NGUYÊN 
     def refresh_ports(self):
         self.port_combo.clear()
@@ -351,29 +433,38 @@ class LogicAnalyzerApp(QMainWindow):
             y_offset = bit_array * 1.0 + (i * 2)
             self.curves[i].setData(x=time_axis, y=y_offset)
 
+        self.last_raw_channels = raw_channels
+        self.last_ts_ms = Ts_ms
+        label_count = self.apply_decoders(raw_channels, Ts_ms)
+
+        self.status_label.setText(f"Ve xong! Da gan {label_count} nhan giai ma.")
+        self.reset_button_ui()
+        self.plot_widget.enableAutoRange(axis='x')
+        self.plot_widget.enableAutoRange(axis='y', enable=False)
+        self.plot_widget.setYRange(-1, 16, padding=0)
+        return
+
         #  CHẠY TẤT CẢ CÁC BỘ GIẢI MÃ ĐANG CÀI 
         decode_funcs = {
         "PWM":  lambda cfg, rc: (decoders.decode_pwm(rc[cfg["channels"]["Data"]], self.current_fs), cfg["channels"]["Data"]),
         "UART": lambda cfg, rc: (decoders.decode_uart(rc[cfg["channels"]["RX"]], self.current_fs, 115200), cfg["channels"]["RX"]),
-        "SPI":  lambda cfg, rc: (decoders.decode_spi(rc[cfg["channels"]["CLK"]], rc[cfg["channels"]["MOSI"]], rc[cfg["channels"]["MISO"]], self.current_fs), cfg["channels"]["CLK"]),
-        "I2C":  lambda cfg, rc: (decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs), cfg["channels"]["SCL"]),
+        "SPI":  lambda cfg, rc: (decoders.decode_spi(rc[cfg["channels"]["CLK"]], rc[cfg["channels"]["MOSI"]], rc[cfg["channels"]["MISO"]], self.current_fs,  cfg["channels"]["MISO"]),  cfg["channels"]["MOSI"]),  # dùng MOSI làm kênh tham chiếu để đặt text
+        "I2C":  lambda cfg, rc: (decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs), cfg["channels"]["SDA"]),
     }
 
         for cfg_widget in self.decode_config_widgets:
             cfg = cfg_widget.get_config()
-            if cfg is None:
-                continue
+            if cfg is None:continue
             t = cfg["type"]
-            if t not in decode_funcs:
-                continue
+            if t not in decode_funcs: continue
             try:
-                packets, ref_ch = decode_funcs[t](cfg, raw_channels)
+                packets = decode_funcs[t](cfg, raw_channels)
                 for pkt in packets:
                     text_item = pg.TextItem(text=pkt['text'], color=(0, 0, 0), anchor=(0.5, 1))
                     text_item.fill = pg.mkBrush(255, 255, 0, 150)
                     mid_idx = int((pkt['start'] + pkt['end']) / 2)
                     x_pos = mid_idx * Ts_ms
-                    y_pos = ref_ch * 2 + 1.2   # nổi ngay trên kênh tham chiếu
+                    y_pos = pkt['channel'] * 2 + 1.2   # nổi ngay trên kênh tham chiếu
                     text_item.setPos(x_pos, y_pos)
                     self.plot_widget.addItem(text_item)
             except Exception as e:
