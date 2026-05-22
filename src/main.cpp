@@ -38,10 +38,7 @@ void init_dma_timer() {
     TIM1->PSC = 0; 
     TIM1->ARR = current_arr;                   
     TIM1->DIER |= TIM_DIER_UDE; 
-    for (int i = 0; i <= 7; i++) {
-        attachInterrupt(digitalPinToInterrupt(i), handle_trigger, CHANGE);
-    }
-    EXTI->IMR &= ~0x00FF; // Khóa ngắt , sẽ mở khi sẵn sàng
+    
 }
 
 void start_capture_mode() {
@@ -69,7 +66,10 @@ void setup() {
     Serial.begin(115200);
     uint32_t t = millis();
     while(!Serial) { if (millis() - t > 2000) break; }
-    
+    for (int i = 0; i <= 7; i++) {
+        attachInterrupt(digitalPinToInterrupt(i), handle_trigger, CHANGE);
+    }
+    EXTI->IMR &= ~0x00FF;
     init_dma_timer();
     start_capture_mode(); // Sẵn sàng chụp
 }
@@ -93,7 +93,7 @@ void loop() {
         if (changed) {
             TIM1->CR1 &= ~TIM_CR1_CEN;     // Tắt Timer
             DMA2_Stream5->CR &= ~DMA_SxCR_EN; // Tắt DMA
-            EXTI->IMR &= ~0x000F;          // Khóa cò súng an toàn
+            EXTI->IMR &= ~0x00FF;          // Khóa cò súng an toàn
             
             init_dma_timer();              // Nạp lại cấu hình mới
             start_capture_mode();          // Rình mồi lại với thông số mới
