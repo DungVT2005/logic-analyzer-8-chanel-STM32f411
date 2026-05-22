@@ -73,7 +73,7 @@ def decode_uart(data_ch, fs, baudrate=115200):
             
     return packets
 
-def decode_spi(clk_ch, mosi_ch, fs):
+def decode_spi(clk_ch, mosi_ch,miso_ch, fs):
     """Giải mã SPI Mode 0 (Đọc dữ liệu tại sườn lên của CLK)"""
     packets = []
     edges = np.diff(clk_ch)
@@ -82,22 +82,26 @@ def decode_spi(clk_ch, mosi_ch, fs):
     byte_val = 0
     bit_count = 0
     start_idx = 0
-    
+    mosi_byte = 0
+    miso_byte = 0
     for clk_edge in rising_edges:
         if bit_count == 0:
             start_idx = clk_edge
-            
-        bit_val = mosi_ch[clk_edge]
-        byte_val = (byte_val << 1) | bit_val # SPI thường gửi MSB first
+        # Lấy giá trị của cả 2 đường data tại thời điểm có sườn lên của CLK
+        mosi_bit = mosi_ch[clk_edge]
+        miso_bit = miso_ch[clk_edge]
+        # SPI thường gửi MSB first
+        mosi_byte = (mosi_byte << 1) | mosi_bit 
+        miso_byte = (miso_byte << 1) | miso_bit
         bit_count += 1
-        
         if bit_count == 8:
-            char_repr = chr(byte_val) if 32 <= byte_val <= 126 else "."
-            text = f"0x{byte_val:02X} '{char_repr}'"
+            # Format text hiển thị. Ví dụ: MO:0x1A MI:0xFF
+            text = f"MO:0x{mosi_byte:02X}\nMI:0x{miso_byte:02X}"
             packets.append({"text": text, "start": start_idx, "end": clk_edge})
-            bit_count = 0
-            byte_val = 0
             
+            bit_count = 0
+            mosi_byte = 0
+            miso_byte = 0
     return packets
 
 def decode_i2c(scl_ch, sda_ch, fs):
