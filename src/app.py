@@ -223,7 +223,7 @@ class LogicAnalyzerApp(QMainWindow):
         btn_add.setMaximumWidth(220)
         btn_add.clicked.connect(self.add_decode_config)
 
-        self.btn_decode_now = QPushButton("Giai ma")
+        self.btn_decode_now = QPushButton("Giải mã")
         self.btn_decode_now.setStyleSheet("""
             QPushButton { background-color: #2f80ed; color: white;
                           font-weight: bold; border-radius: 4px; padding: 4px 10px; }
@@ -317,10 +317,10 @@ class LogicAnalyzerApp(QMainWindow):
 
     def decode_last_capture(self):
         if self.last_raw_channels is None or self.last_ts_ms is None:
-            QMessageBox.information(self, "Chua co du lieu", "Hay chup tin hieu truoc.")
+            QMessageBox.information(self, "Chưa có dữ liệu", "Hãy chụp tín hiệu trước.")
             return
         count = self.apply_decoders(self.last_raw_channels, self.last_ts_ms)
-        self.status_label.setText(f"Da giai ma lai tin hieu vua chup: {count} nhan.")
+        self.status_label.setText(f"Đã giải mã lại tín hiệu vừa chụp: {count} nhãn.")
 
     def apply_decoders(self, raw_channels, Ts_ms):
         self.clear_decode_annotations()
@@ -340,7 +340,7 @@ class LogicAnalyzerApp(QMainWindow):
                     rc[cfg["channels"]["MISO"]],
                     self.current_fs
                 ),
-                cfg["channels"]["MOSI"]
+                [cfg["channels"]["MOSI"], cfg["channels"]["MISO"]]
             ),
             "I2C": lambda cfg, rc: (
                 decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs),
@@ -358,18 +358,20 @@ class LogicAnalyzerApp(QMainWindow):
                 continue
             try:
                 packets, ref_ch = decode_funcs[t](cfg, raw_channels)
+                ref_channels = ref_ch if isinstance(ref_ch, list) else [ref_ch]
                 for pkt in packets:
-                    text_item = pg.TextItem(text=pkt["text"], color=(0, 0, 0), anchor=(0.5, 1))
-                    text_item.fill = pg.mkBrush(255, 255, 0, 150)
-                    mid_idx = int((pkt["start"] + pkt["end"]) / 2)
-                    x_pos = mid_idx * Ts_ms
-                    y_pos = ref_ch * 2 + 1.2
-                    text_item.setPos(x_pos, y_pos)
-                    self.plot_widget.addItem(text_item)
-                    self.decode_text_items.append(text_item)
-                    label_count += 1
+                    for ch in ref_channels:
+                        text_item = pg.TextItem(text=pkt["text"], color=(0, 0, 0), anchor=(0.5, 1))
+                        text_item.fill = pg.mkBrush(255, 255, 0, 150)
+                        mid_idx = int((pkt["start"] + pkt["end"]) / 2)
+                        x_pos = mid_idx * Ts_ms
+                        y_pos = ch * 2 + 1.2
+                        text_item.setPos(x_pos, y_pos)
+                        self.plot_widget.addItem(text_item)
+                        self.decode_text_items.append(text_item)
+                        label_count += 1
             except Exception as e:
-                print(f"Loi giai ma {t}:", e)
+                print(f"Lỗi giải mã {t}:", e)
         return label_count
 
     # CÁC HÀM GỐC GIỮ NGUYÊN 
@@ -437,44 +439,12 @@ class LogicAnalyzerApp(QMainWindow):
         self.last_ts_ms = Ts_ms
         label_count = self.apply_decoders(raw_channels, Ts_ms)
 
-        self.status_label.setText(f"Ve xong! Da gan {label_count} nhan giai ma.")
+        self.status_label.setText(f"Vẽ xong! Đã gắn {label_count} nhãn giải mã.")
         self.reset_button_ui()
         self.plot_widget.enableAutoRange(axis='x')
         self.plot_widget.enableAutoRange(axis='y', enable=False)
         self.plot_widget.setYRange(-1, 16, padding=0)
-        return
 
-        #  CHẠY TẤT CẢ CÁC BỘ GIẢI MÃ ĐANG CÀI 
-        decode_funcs = {
-        "PWM":  lambda cfg, rc: (decoders.decode_pwm(rc[cfg["channels"]["Data"]], self.current_fs), cfg["channels"]["Data"]),
-        "UART": lambda cfg, rc: (decoders.decode_uart(rc[cfg["channels"]["RX"]], self.current_fs, 115200), cfg["channels"]["RX"]),
-        "SPI":  lambda cfg, rc: (decoders.decode_spi(rc[cfg["channels"]["CLK"]], rc[cfg["channels"]["MOSI"]], rc[cfg["channels"]["MISO"]], self.current_fs,  cfg["channels"]["MISO"]),  cfg["channels"]["MOSI"]),  # dùng MOSI làm kênh tham chiếu để đặt text
-        "I2C":  lambda cfg, rc: (decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs), cfg["channels"]["SDA"]),
-    }
-
-        for cfg_widget in self.decode_config_widgets:
-            cfg = cfg_widget.get_config()
-            if cfg is None:continue
-            t = cfg["type"]
-            if t not in decode_funcs: continue
-            try:
-                packets = decode_funcs[t](cfg, raw_channels)
-                for pkt in packets:
-                    text_item = pg.TextItem(text=pkt['text'], color=(0, 0, 0), anchor=(0.5, 1))
-                    text_item.fill = pg.mkBrush(255, 255, 0, 150)
-                    mid_idx = int((pkt['start'] + pkt['end']) / 2)
-                    x_pos = mid_idx * Ts_ms
-                    y_pos = pkt['channel'] * 2 + 1.2   # nổi ngay trên kênh tham chiếu
-                    text_item.setPos(x_pos, y_pos)
-                    self.plot_widget.addItem(text_item)
-            except Exception as e:
-                print(f"Lỗi giải mã {t}:", e)
-
-        self.status_label.setText("✅ VẼ XONG! Kéo chuột để di chuyển, Lăn chuột để Zoom.")
-        self.reset_button_ui()
-        self.plot_widget.enableAutoRange(axis='x')
-        self.plot_widget.enableAutoRange(axis='y', enable=False)
-        self.plot_widget.setYRange(-1, 16, padding=0)
 
     def show_error(self, msg):
         self.status_label.setText(f"❌ LỖI: {msg}")
