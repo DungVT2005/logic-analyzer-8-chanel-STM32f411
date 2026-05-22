@@ -361,8 +361,10 @@ class LogicAnalyzerApp(QMainWindow):
                 ref_channels = ref_ch if isinstance(ref_ch, list) else [ref_ch]
                 for pkt in packets:
                     for ch in ref_channels:
-                        text_item = pg.TextItem(text=pkt["text"], color=(0, 0, 0), anchor=(0.5, 1))
-                        text_item.fill = pg.mkBrush(255, 255, 0, 150)
+                        is_i2c_boundary = t == "I2C" and pkt["text"] in ("I2C START", "I2C STOP")
+                        label_color = (255, 255, 255) if is_i2c_boundary else (0, 0, 0)
+                        text_item = pg.TextItem(text=pkt["text"], color=label_color, anchor=(0.5, 1))
+                        text_item.fill = pg.mkBrush(220, 0, 0, 190) if is_i2c_boundary else pg.mkBrush(255, 255, 0, 150)
                         mid_idx = int((pkt["start"] + pkt["end"]) / 2)
                         x_pos = mid_idx * Ts_ms
                         y_pos = ch * 2 + 1.2
