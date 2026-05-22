@@ -49,8 +49,13 @@ void start_capture_mode() {
     TIM1->CR1 |= TIM_CR1_CEN; 
     if (current_post_trigger < SAMPLE_COUNT) {
         // Chế độ Pre-trigger 
-        // BẮT BUỘC phải chờ 15ms để DMA xúc đủ 10.000 mẫu đè lên rác cũ
-        delay(15); 
+        // Tốc độ lấy mẫu = 84MHz / (current_arr + 1)
+        // Thời gian chờ (ms) = (Số mẫu Pre-trigger * 1000) / Tốc độ lấy mẫu
+        uint32_t pre_samples = SAMPLE_COUNT - current_post_trigger;
+        uint32_t sample_rate = 84000000 / (current_arr + 1);
+        uint32_t wait_time_ms = (pre_samples * 1000) / sample_rate;
+        
+        delay(wait_time_ms + 2); // Cộng thêm 2ms buffer cho chắc chắn
     } else {
         // Chế độ Full Post-trigger 
     }
