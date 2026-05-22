@@ -353,23 +353,11 @@ class LogicAnalyzerApp(QMainWindow):
 
         #  CHẠY TẤT CẢ CÁC BỘ GIẢI MÃ ĐANG CÀI 
         decode_funcs = {
-            "PWM":  lambda cfg, rc: (
-                decoders.decode_pwm(rc[cfg["channels"]["Data"]], self.current_fs),
-                cfg["channels"]["Data"]
-            ),
-            "UART": lambda cfg, rc: (
-                decoders.decode_uart(rc[cfg["channels"]["RX"]], self.current_fs, 115200),
-                cfg["channels"]["RX"]
-            ),
-            "SPI":  lambda cfg, rc: (
-                decoders.decode_spi(rc[cfg["channels"]["CLK"]], rc[cfg["channels"]["MOSI"]],rc[cfg["channels"]["MISO"]], self.current_fs),
-                cfg["channels"]["CLK"]
-            ),
-            "I2C":  lambda cfg, rc: (
-                decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs),
-                cfg["channels"]["SCL"]
-            ),
-        }
+        "PWM":  lambda cfg, rc: (decoders.decode_pwm(rc[cfg["channels"]["Data"]], self.current_fs), cfg["channels"]["Data"]),
+        "UART": lambda cfg, rc: (decoders.decode_uart(rc[cfg["channels"]["RX"]], self.current_fs, 115200), cfg["channels"]["RX"]),
+        "SPI":  lambda cfg, rc: (decoders.decode_spi(rc[cfg["channels"]["CLK"]], rc[cfg["channels"]["MOSI"]], rc[cfg["channels"]["MISO"]], self.current_fs), cfg["channels"]["CLK"]),
+        "I2C":  lambda cfg, rc: (decoders.decode_i2c(rc[cfg["channels"]["SCL"]], rc[cfg["channels"]["SDA"]], self.current_fs), cfg["channels"]["SCL"]),
+    }
 
         for cfg_widget in self.decode_config_widgets:
             cfg = cfg_widget.get_config()
