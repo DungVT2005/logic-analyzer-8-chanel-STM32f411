@@ -1312,6 +1312,4 @@ def decode_i2c(scl, sda, fs):
         packets.append(_packet(byte_start, i, text))
         byte_bits = []
         byte_index += 1
-        if len(packets) >= 160:
-            break
     return packets
