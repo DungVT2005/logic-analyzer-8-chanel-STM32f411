@@ -1232,7 +1232,7 @@ def decode_uart(channel_data, fs, baudrate):
     return packets
 
 
-def decode_spi(clk, mosi, miso, fs):
+def decode_spi(clk, mosi, miso, fs, mosi_idx, miso_idx):
     """Decode SPI mode 0 bytes on rising CLK edges."""
     clk_bits = _as_bits(clk)
     mosi_bits = _as_bits(mosi)
@@ -1260,6 +1260,18 @@ def decode_spi(clk, mosi, miso, fs):
                 bit_count = 0
                 if len(packets) >= 120:
                     break
+    
+    # Khi tìm thấy dữ liệu trên MOSI:
+    packets.append({
+        'start': start_idx, 'end': end_idx, 'text': f"MOSI: {val:02X}", 
+        'channel': mosi_idx # Gán kênh cụ thể cho gói này
+    })
+    
+    # Khi tìm thấy dữ liệu trên MISO:
+    packets.append({
+        'start': start_idx, 'end': end_idx, 'text': f"MISO: {val:02X}", 
+        'channel': miso_idx # Gán kênh cụ thể cho gói này
+    })
     return packets
 
 
