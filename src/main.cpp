@@ -4,12 +4,13 @@
 
 uint8_t logic_buffer[SAMPLE_COUNT];
 volatile bool triggered = false;
-
-uint32_t current_arr = 83; // Mặc định 1MHz
+volatile uint16_t trigger_ndtr = 0;
+uint32_t current_arr = SystemCoreClock/1000000 -1; // Mặc định 1MHz
 uint32_t current_post_trigger = 50000; // Mặc định Pre-trigger 10k
 // HÀM XỬ LÝ NGẮT  
 void handle_trigger() {
     if (!triggered) {
+        trigger_ndtr = DMA2_Stream5->NDTR; 
         triggered = true;
         // Tắt ngắt 
         EXTI->IMR &= ~0x00FF; //    8 kênh ~0x00FF
@@ -21,7 +22,11 @@ void init_dma_timer() {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
     RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
     RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
- 
+    
+    //  LÀM SẠCH HỆ THỐNG TRƯỚC KHI CẤU HÌNH:
+    TIM1->SR = 0; // Xóa cờ ngắt của Timer 1
+    DMA2->HIFCR = DMA_HIFCR_CTCIF5 | DMA_HIFCR_CHTIF5 | DMA_HIFCR_CTEIF5 | DMA_HIFCR_CDMEIF5 | DMA_HIFCR_CFEIF5; // Xóa sạch cờ DMA
+
     GPIOA->MODER &= ~(0x0000FFFF );  // xác định chân iput    8 kênh 0x0000FFFF 
     GPIOA->PUPDR &= ~(0x0000FFFF );   // Cấu hình PA0-PA3 là input floating 
     // cấu hình DMA
@@ -46,13 +51,15 @@ void start_capture_mode() {
     
     // Bật DMA và Timer để liên tục ghi hình "Quá khứ" (Pre-trigger)
     DMA2_Stream5->CR |= DMA_SxCR_EN; 
+    // Reset bộ đếm Timer về 0 trước khi bắt đầu đếm để đảm bảo mẫu đầu tiên
+    TIM1->CNT = 0;
     TIM1->CR1 |= TIM_CR1_CEN; 
     if (current_post_trigger < SAMPLE_COUNT) {
         // Chế độ Pre-trigger 
         // Tốc độ lấy mẫu = 84MHz / (current_arr + 1)
         // Thời gian chờ (ms) = (Số mẫu Pre-trigger * 1000) / Tốc độ lấy mẫu
         uint32_t pre_samples = SAMPLE_COUNT - current_post_trigger;
-        uint32_t sample_rate = 84000000 / (current_arr + 1);
+        uint32_t sample_rate = SystemCoreClock / (current_arr + 1);
         uint32_t wait_time_ms = (pre_samples * 1000) / sample_rate;
         
         delay(wait_time_ms + 2); // Cộng thêm 2ms buffer cho chắc chắn
@@ -85,10 +92,10 @@ void loop() {
         bool changed = false;
 
         // Đổi tốc độ
-        if (command == '1') { current_arr = 839; changed = true; } // 100k
-        if (command == '2') { current_arr = 167; changed = true; } // 500k
-        if (command == '3') { current_arr = 83; changed = true;  } // 1M
-        if (command == '4') { current_arr = 41; changed = true;  } // 2M
+        if (command == '1') { current_arr = SystemCoreClock/100000 -1; changed = true; } // 100k
+        if (command == '2') { current_arr = SystemCoreClock/500000 -1; changed = true; } // 500k
+        if (command == '3') { current_arr = SystemCoreClock/1000000 -1; changed = true;  } // 1M
+        if (command == '4') { current_arr = SystemCoreClock/2000000 -1; changed = true;  } // 2M
         
         // Đổi chế độ Trigger
         if (command == 'F') { current_post_trigger = 60000; changed = true; } // Full Post
@@ -108,7 +115,7 @@ void loop() {
     if (triggered) {
         // CHỜ GHI ĐỦ MẪU 
         int32_t remaining = current_post_trigger;
-        uint16_t prev_ndtr = DMA2_Stream5->NDTR;
+        uint16_t prev_ndtr = trigger_ndtr;
         
         while (remaining > 0) {
             uint16_t curr_ndtr = DMA2_Stream5->NDTR;
