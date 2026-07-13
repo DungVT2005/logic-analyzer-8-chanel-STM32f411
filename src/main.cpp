@@ -56,7 +56,7 @@ void start_capture_mode() {
     TIM1->CR1 |= TIM_CR1_CEN; 
     if (current_post_trigger < SAMPLE_COUNT) {
         // Chế độ Pre-trigger 
-        // Tốc độ lấy mẫu = 84MHz / (current_arr + 1)
+        // Tốc độ lấy mẫu = SystemCoreClock / (current_arr + 1)
         // Thời gian chờ (ms) = (Số mẫu Pre-trigger * 1000) / Tốc độ lấy mẫu
         uint32_t pre_samples = SAMPLE_COUNT - current_post_trigger;
         uint32_t sample_rate = SystemCoreClock / (current_arr + 1);
