@@ -5,8 +5,9 @@
 uint8_t logic_buffer[SAMPLE_COUNT];
 volatile bool triggered = false;
 volatile uint16_t trigger_ndtr = 0;
-uint32_t current_arr = SystemCoreClock/1000000 -1; // Mặc định 1MHz
+uint32_t current_arr; 
 uint32_t current_post_trigger = 50000; // Mặc định Pre-trigger 10k
+const uint32_t pins[] = {PA0, PA1, PA2, PA3, PA4, PA5, PA6, PA7};
 // HÀM XỬ LÝ NGẮT  
 void handle_trigger() {
     if (!triggered) {
@@ -29,6 +30,7 @@ void init_dma_timer() {
 
     GPIOA->MODER &= ~(0x0000FFFF );  // xác định chân iput    8 kênh 0x0000FFFF 
     GPIOA->PUPDR &= ~(0x0000FFFF );   // Cấu hình PA0-PA3 là input floating 
+    GPIOA->OSPEEDR |= 0x0000FFFF;  // Đặt PA0-PA7 ở Very High Speed
     // cấu hình DMA
     DMA2_Stream5->CR = 0; 
     while(DMA2_Stream5->CR & DMA_SxCR_EN); 
@@ -48,11 +50,23 @@ void init_dma_timer() {
 
 void start_capture_mode() {
     triggered = false;
-    
-    // Bật DMA và Timer để liên tục ghi hình "Quá khứ" (Pre-trigger)
-    DMA2_Stream5->CR |= DMA_SxCR_EN; 
-    // Reset bộ đếm Timer về 0 trước khi bắt đầu đếm để đảm bảo mẫu đầu tiên
+    //  Đảm bảo timer và DMA đã dừng hoàn toàn trước khi can thiệp thanh ghi
+    TIM1->CR1 &= ~TIM_CR1_CEN;
+    DMA2_Stream5->CR &= ~DMA_SxCR_EN;
+    while (DMA2_Stream5->CR & DMA_SxCR_EN) {}
+
+    //  Xóa sạch cờ cũ DMA cho một kỳ capture mới
+    DMA2->HIFCR = DMA_HIFCR_CTCIF5 | DMA_HIFCR_CHTIF5 |
+                  DMA_HIFCR_CTEIF5 | DMA_HIFCR_CDMEIF5 |
+                  DMA_HIFCR_CFEIF5;
+
+    DMA2_Stream5->PAR  = (uint32_t)&GPIOA->IDR;
+    DMA2_Stream5->M0AR = (uint32_t)logic_buffer;
+    DMA2_Stream5->NDTR = SAMPLE_COUNT;
+
+    // Bật DMA sẵn sàng trước, rồi mới cho timer bắt đầu nhịp đếm
     TIM1->CNT = 0;
+    DMA2_Stream5->CR |= DMA_SxCR_EN;
     TIM1->CR1 |= TIM_CR1_CEN; 
     if (current_post_trigger < SAMPLE_COUNT) {
         // Chế độ Pre-trigger 
@@ -78,12 +92,21 @@ void setup() {
     Serial.begin(115200);
     uint32_t t = millis();
     while(!Serial) { if (millis() - t > 2000) break; }
+    current_arr = SystemCoreClock / 1000000 - 1;
     for (int i = 0; i <= 7; i++) {
-        attachInterrupt(digitalPinToInterrupt(i), handle_trigger, CHANGE);
+    pinMode(pins[i], INPUT); 
+    attachInterrupt(digitalPinToInterrupt(pins[i]), handle_trigger, CHANGE);
     }
     EXTI->IMR &= ~0x00FF;
     init_dma_timer();
     start_capture_mode(); // Sẵn sàng chụp
+    // Đẩy độ ưu tiên ngắt lên cao nhất (mức 0)
+    NVIC_SetPriority(EXTI0_IRQn, 0);
+    NVIC_SetPriority(EXTI1_IRQn, 0);
+    NVIC_SetPriority(EXTI2_IRQn, 0);
+    NVIC_SetPriority(EXTI3_IRQn, 0);
+    NVIC_SetPriority(EXTI4_IRQn, 0);
+    NVIC_SetPriority(EXTI9_5_IRQn, 0);
 }
 
 void loop() {
