@@ -1,65 +1,64 @@
-# 🔬 HUST Logic Analyzer - 8 Channels
+Một hệ thống Máy phân tích logic (Logic Analyzer) 8 kênh tốc độ cao tự chế, sử dụng vi điều khiển STM32F411CEU6 (Black Pill) và giao diện đồ họa thời gian thực bằng Python (PyQtGraph).
+Dự án được xây dựng theo kiến trúc Store-and-Forward (Capture tĩnh), kết hợp sức mạnh của Hardware Timer và DMA để đảm bảo tỉ lệ lấy mẫu chính xác 100% không rớt mẫu (Zero Sample Drop Rate).
 
-Một dự án Máy đo Logic (Logic Analyzer) 8 kênh hiệu năng cao được phát triển trên nền tảng vi điều khiển STM32 (ARM Cortex-M4) kết hợp với phần mềm hiển thị trên PC. Dự án cung cấp giải pháp phân tích tín hiệu số (I2C, SPI, UART...) theo thời gian thực với độ trễ cực thấp.
+1. Phần cứng (Firmware STM32)
+8 Kênh đầu vào song song: Đọc trực tiếp từ thanh ghi Port A (PA0 - PA7), bao phủ đủ các chuẩn giao tiếp UART, I2C, SPI.
 
-## 📝 Giới thiệu chung
+Tốc độ lấy mẫu cao: Hỗ trợ 4 nấc tốc độ: 100 kHz, 500 kHz, 1 MHz, và 2 MHz.
 
-Dự án bao gồm 2 thành phần chính:
-1. **Firmware (STM32):** Quản lý phần cứng ở mức thanh ghi (Register-level), sử dụng cơ chế Ngắt ngoài (EXTI) kết hợp Timer và DMA (Direct Memory Access) để lấy mẫu tín hiệu với tốc độ lên đến 2MHz mà không làm nghẽn CPU.
-2. **PC App (Python):** Ứng dụng GUI mượt mà được xây dựng bằng PyQt5 và PyQtGraph, cho phép điều khiển STM32, tự động thu thập dữ liệu và vẽ đồ thị xung vuông (Step-mode) chuẩn xác, hỗ trợ Zoom/Pan thời gian thực.
+Lấy mẫu không can thiệp CPU (Zero CPU Intervention): Sử dụng bộ định thời TIM1 kích hoạt trực tiếp DMA2 ghi vào bộ đệm vòng (Circular Buffer) trong SRAM.
 
-## ✨ Tính năng nổi bật
+Chế độ Trigger thông minh:
 
-### Về mặt Phần cứng (Firmware)
-* **Thu thập 8 kênh đồng thời:** Đọc trực tiếp từ thanh ghi cổng `IDR` của GPIOA (PA0 - PA7) bằng 8 bit.
-* **Zero-latency Trigger:** Sử dụng Ngắt phần cứng (EXTI) để bắt chính xác khoảnh khắc sườn tín hiệu mà không có độ trễ.
-* **Trigger Lock chống nhiễu:** Thuật toán tự động khóa mặt nạ ngắt (`IMR`) ngay sau khi kích hoạt để chống hiện tượng dội tín hiệu (Bouncing / Interrupt Storm).
-* **Bộ đệm DMA Circular:** Sử dụng DMA chế độ vòng tròn (Circular Mode) để thu thập liên tục 60.000 mẫu vào RAM mà không làm tràn bộ nhớ, kết hợp thuật toán Duỗi mảng (Unroll Array) trước khi truyền qua USB/UART.
-* **Chế độ lấy mẫu đa dạng:** Hỗ trợ Pre-Trigger (Bắt cả dữ liệu quá khứ) và Full Post-Trigger (Chỉ bắt dữ liệu tương lai). Tùy chỉnh tốc độ lấy mẫu: 100kHz, 500kHz, 1MHz, 2MHz.
+Full Post-Trigger: Bắt đầu ghi hình 60.000 mẫu ngay khi xuất hiện sườn sóng Trigger.
 
-### Về mặt Phần mềm (PC App)
-* **Giao diện trực quan:** Bảng điều khiển tối ưu hóa thao tác 1-click với các nút radio tiện lợi.
-* **Bắt và vẽ sóng tức thì:** Sử dụng đa luồng (QThread) để xử lý dữ liệu Serial không làm đơ giao diện.
-* **Hiển thị chuẩn công nghiệp:** Vẽ xung vuông 90 độ (Step mode) với độ cao tùy chỉnh, hiển thị nhãn kênh rõ ràng, auto-scale thông minh y hệt PulseView.
+Pre-Trigger (10k Pre / 50k Post): Ghi nhớ liên tục thời gian thực để lưu lại 10.000 mẫu trong "quá khứ" (trước thời điểm Trigger) và 50.000 mẫu "tương lai", giúp bắt quả tang lỗi tín hiệu bất ngờ.
 
-## 🛠 Yêu cầu phần cứng
-* Vi điều khiển: STM32F411 (Black Pill) hoặc các dòng STM32 tương đương.
-* Dây cắm tín hiệu (Test hooks) nối vào các chân từ **PA0 đến PA7**.
-* Cáp USB to UART (CP2102/CH340) hoặc kết nối trực tiếp USB CDC.
+Mạch bảo vệ đầu vào (Input Protection): Tích hợp mạch hạ áp và IC đệm 74HC24x / Diode bảo vệ, chịu được điện áp đầu vào lên tới 50V.
 
-## 💻 Hướng dẫn cài đặt
+2. Phần mềm (Python GUI)
+Giao diện siêu mượt: Sử dụng PyQtGraph vẽ đồ thị đa kênh song công với độ trễ cực thấp.
 
-### 1. Cài đặt và Nạp Firmware
-* Dự án được cấu hình bằng **PlatformIO** (hoặc Keil C / STM32CubeIDE tùy môi trường của bạn).
-* Biên dịch và nạp file `.bin`/`.hex` xuống mạch STM32.
+Thu thập chạy ngầm (Background Thread): Khối dữ liệu 60.000 Byte được thu thập và tách bit ở luồng độc lập, không gây đơ giật giao diện (No UI Freeze).
 
-### 2. Cài đặt PC App
-Đảm bảo máy tính đã cài đặt Python 3.x. Mở Terminal/Command Prompt và cài đặt các thư viện cần thiết:
-```bash
-pip install pyqt5 pyqtgraph pyserial numpy
+Tự động nhận diện Baudrate (Auto-Baud Detect): Thuật toán tự động đo khoảng cách xung bit để tìm tốc độ truyền của UART (9600, 38400, 115200...).
 
-Hướng dẫn sử dụng
-Cắm mạch STM32 vào máy tính.
+Giải mã giao thức (Protocol Decoders): Tự động phân tích sóng logic và gắn nhãn (Annotation) thông minh cho các gói tin UART, I2C, SPI,PWM 1-wire (có chống đè nhãn khi phóng to/thu nhỏ).
 
-Chạy ứng dụng giao diện bằng lệnh:
+Sơ đồ kết nối phần cứng
+STM32F411 Pin	Kênh đo (Channel)	Ghi chú
+PA0	CH 0	Nối qua mạch bảo vệ vào tín hiệu cần đo
+PA1	CH 1	Nối qua mạch bảo vệ vào tín hiệu cần đo
+PA2 - PA6	CH 2 - CH 6	Nối qua mạch bảo vệ vào tín hiệu cần đo
+PA7	CH 7	Nối qua mạch bảo vệ vào tín hiệu cần đo
+GND	GND	Bắt buộc nối chung GND với mạch cần đo
+USB Type-C	COM Port	Nối với máy tính để truyền dữ liệu và cấp nguồn
 
-Bash
-python app.py
-Trên giao diện ứng dụng:
+Hướng dẫn cài đặt & Sử dụng
+Bước 1: Chuẩn bị phần cứng và Nạp Firmware
+Mở dự án Firmware bằng Arduino IDE hoặc PlatformIO / VS Code.
+
+Chọn board: STM32F411CEU6 (Black Pill).
+
+Nạp code xuống vi điều khiển qua cổng USB hoặc mạch nạp ST-Link.
+
+Bước 2: Cài đặt thư viện Python
+Đảm bảo máy tính đã cài đặt Python 3.8+. Mở Terminal / CMD và chạy lệnh cài đặt các gói phụ thuộc:pip install pyqt5 pyqtgraph pyserial numpy
+
+Bước 3: Khởi chạy phần mềm và Đo lường
+Cắm cáp USB nối STM32 với máy tính. Check xem máy đã nhận cổng COM chưa (VD: COM3 trên Windows hoặc /dev/ttyACM0 trên Linux).
+
+Chạy file giao diện chính của chương trình:
+Thao tác trên giao diện:
 
 Chọn cổng COM tương ứng với STM32.
 
-Chọn Tốc độ lấy mẫu (Ví dụ: 1 MHz).
+Chọn tốc độ lấy mẫu (Sample Rate): Chọn 1 MHz hoặc 2 MHz cho tín hiệu nhanh (SPI, UART 115200); chọn 100 kHz cho tín hiệu chậm (UART 9600).
 
-Chọn Kiểu lấy mẫu (Pre-Trigger hoặc Post-Trigger).
+Chọn chế độ Trigger: Chọn Pre-Trigger (khuyên dùng) hoặc Full Post-Trigger.
 
-Bấm nút ▶ BẤM ĐỂ ĐO TÍN HIỆU NGAY.
+Chọn bộ giải mã (Decoder): Chọn chuẩn giao tiếp bạn đang đo (VD: UART) và gắn kênh TX/RX tương ứng với CH0 - CH7.
 
-Cấp tín hiệu vào các chân PA0-PA7. Hệ thống sẽ tự động bắt Trigger, thu thập 60.000 mẫu và hiển thị lên màn hình đồ thị ngay lập tức.
+Bấm nút ▶ BẤM ĐỂ ĐO TÍN HIỆU NGAY (CAPTURE).
 
-Sử dụng con lăn chuột để Zoom In/Out và kéo thả chuột để xem dòng thời gian của các tín hiệu I2C/SPI.
-
-👥 Nhóm phát triển
-Dự án thuộc chuyên ngành Hệ thống nhúng và IoT - Đại học Bách khoa Hà Nội (HUST).
-
-Thành viên: * Phát triển Firmware (STM32 & Hardware Logic): Dũng
+Kích hoạt mạch cần đo để phát tín hiệu. Phần mềm sẽ tự động bắt sóng, vẽ đồ thị và hiển thị nhãn giải mã trực quan trên màn hình.
